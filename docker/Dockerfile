@@ -34,5 +34,6 @@ RUN pip install --no-cache-dir "apache-airflow==${AIRFLOW_VERSION}" -r /tmp/requ
 WORKDIR /opt/airflow/project
 COPY --chown=airflow:root pyproject.toml ./
 COPY --chown=airflow:root src/ src/
+COPY --chown=airflow:root sql/ sql/
 COPY --chown=airflow:root dags/ dags/
 COPY --chown=airflow:root tests/ tests/

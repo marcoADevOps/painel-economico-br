@@ -23,6 +23,28 @@ docs/       arquitetura e notas (ver docs/setup-vm.md)
 compose.yaml
 ```
 
+## DAGs
+
+### `bcb_sgs`: Banco Central (SGS)
+
+| Série | Código SGS | Periodicidade |
+|---|---|---|
+| Meta Selic definida pelo Copom (% a.a.) | 432 | diária |
+| Dólar americano (venda), PTAX de fechamento | 1 | diária (dias úteis) |
+
+- **Agendamento:** dias úteis às 19h (horário de Brasília), com `catchup`.
+- **Janela processada:** os 10 dias anteriores à data lógica da execução. Assim entram dados publicados com atraso ou revisados, e um período com a VM desligada é preenchido quando ela volta.
+- **Fluxo de dados:**
+  - `raw.bcb_sgs_response` guarda a resposta JSON original de cada janela consultada;
+  - `staging.bcb_sgs_observation` guarda os dados tipados, com chave (`series_code`, `ref_date`).
+- **Idempotência:** as duas tabelas usam upsert pela chave natural, então reexecutar não cria linhas duplicadas.
+- **Carga de histórico:** disparar o DAG manualmente com `start` e, se quiser, `end` nos parâmetros (formato `YYYY-MM-DD`). O período é consultado em janelas de 1 ano.
+
+Particularidades da API do SGS, conferidas na documentação oficial e em testes:
+- **Janela máxima:** séries diárias aceitam no máximo 10 anos por consulta. Uma janela maior, ou uma consulta sem datas, retorna HTTP 406.
+- **Período sem dados:** retorna HTTP 404 com `Value(s) not found`. O pipeline trata isso como "sem dados", não como erro.
+- **Instabilidade:** às vezes a API responde HTTP 200 com uma página HTML de erro. Por isso o conteúdo da resposta é validado e a task é repetida.
+
 ## Como rodar
 
 Tudo roda na VM, dentro de contêineres (ver [docs/setup-vm.md](docs/setup-vm.md)):
