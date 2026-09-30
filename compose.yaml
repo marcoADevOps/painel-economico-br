@@ -137,9 +137,10 @@ services:
       MB_REPORT_TIMEZONE: America/Sao_Paulo
       MB_ANON_TRACKING_ENABLED: "false"
       MB_CHECK_FOR_UPDATES: "false"
-      # 4 GB VM: cap the JVM heap and the container
-      JAVA_OPTS: -Xmx768m -XX:+UseSerialGC
-    mem_limit: 1g
+      # 4 GB VM: cap the JVM. Measured: with -Xmx768m the process needs ~1 GB
+      # (metaspace, threads, buffers) and kept hitting a 1 GB container limit.
+      JAVA_OPTS: -Xmx640m -XX:MaxMetaspaceSize=256m -XX:+UseSerialGC
+    mem_limit: 1280m
     ports:
       - "3000:3000"
     healthcheck:
