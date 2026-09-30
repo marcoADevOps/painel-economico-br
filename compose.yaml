@@ -46,6 +46,9 @@ services:
       WAREHOUSE_DB: ${WAREHOUSE_DB}
       WAREHOUSE_USER: ${WAREHOUSE_USER}
       WAREHOUSE_PASSWORD: ${WAREHOUSE_PASSWORD}
+      # Used only by the init scripts (docker/postgres/20-metabase.sh)
+      METABASE_DB_PASSWORD: ${METABASE_DB_PASSWORD:-}
+      METABASE_READER_PASSWORD: ${METABASE_READER_PASSWORD:-}
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./docker/postgres:/docker-entrypoint-initdb.d:ro
@@ -118,6 +121,37 @@ services:
       <<: *airflow-common-depends-on
       airflow-init:
         condition: service_completed_successfully
+
+  # Dashboards. Its own settings live in the "metabase" database; the
+  # dashboards read the warehouse as metabase_ro (marts schema, read-only).
+  metabase:
+    image: metabase/metabase:v0.63.18.5
+    environment:
+      MB_DB_TYPE: postgres
+      MB_DB_HOST: postgres
+      MB_DB_PORT: "5432"
+      MB_DB_DBNAME: metabase
+      MB_DB_USER: metabase
+      MB_DB_PASS: ${METABASE_DB_PASSWORD:?set METABASE_DB_PASSWORD in .env}
+      MB_SITE_LOCALE: pt_BR
+      MB_REPORT_TIMEZONE: America/Sao_Paulo
+      MB_ANON_TRACKING_ENABLED: "false"
+      MB_CHECK_FOR_UPDATES: "false"
+      # 4 GB VM: cap the JVM heap and the container
+      JAVA_OPTS: -Xmx768m -XX:+UseSerialGC
+    mem_limit: 1g
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:3000/api/health | grep -q ok"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 180s
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
 
 volumes:
   postgres-data:
