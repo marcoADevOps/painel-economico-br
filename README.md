@@ -59,6 +59,18 @@ Particularidades da API do SGS, conferidas na documentação oficial e em testes
 - **Sinais especiais do SIDRA:** `-` é zero absoluto. `X`, `..` e `...` não têm valor; essas linhas são descartadas e contadas no log.
 - **Carga de histórico:** disparar manualmente com `start` (os dados começam em 2012).
 
+### `marts`: tabelas para análise
+
+O DAG é disparado por Assets do Airflow sempre que `bcb_sgs` **ou** `ibge_sidra` terminam de atualizar a staging. Com a condição OU, uma fonte com falha não segura a atualização da outra, e a reconstrução leva segundos. Cada tabela é refeita numa única transação (`TRUNCATE` + `INSERT`), então quem consulta nunca vê uma tabela pela metade e reexecutar é sempre seguro.
+
+| Tabela | Grão | Conteúdo |
+|---|---|---|
+| `marts.monthly_indicators` | mês | Selic meta no fim do mês, PTAX média e de fechamento, IPCA Brasil (mensal e em 12 meses) e juro real ex-post: (1 + Selic) / (1 + IPCA 12m) − 1 |
+| `marts.ipca_by_region` | mês × localidade | IPCA mensal e em 12 meses do Brasil, regiões metropolitanas e capitais |
+| `marts.unemployment_by_region` | trimestre × localidade | Taxa de desocupação do Brasil, Grandes Regiões e UFs |
+
+O IPCA das tabelas do SIDRA usadas aqui começa em 2012. Por isso, antes de 2012, `monthly_indicators` tem Selic e PTAX, mas não tem IPCA nem juro real.
+
 ## Alertas
 
 Quando uma task falha de vez, sem novas tentativas restantes, o `on_failure_callback`

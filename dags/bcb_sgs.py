@@ -16,7 +16,14 @@ import pendulum
 from airflow.sdk import dag, task
 
 from painel.bcb import SERIES
-from painel.dag_support import DEFAULT_ARGS, TIMEZONE, WINDOW_PARAMS, dw_connection, run_window
+from painel.dag_support import (
+    DEFAULT_ARGS,
+    STAGING_BCB,
+    TIMEZONE,
+    WINDOW_PARAMS,
+    dw_connection,
+    run_window,
+)
 
 LOOKBACK_DAYS = 10
 DDL_FILE = Path(__file__).resolve().parents[1] / "sql" / "bcb_sgs.sql"
@@ -98,10 +105,17 @@ def bcb_sgs():
         )
         return written
 
+    @task(outlets=[STAGING_BCB])
+    def publish_staging(written: list[int]) -> int:
+        """Single asset event per run, after every series is in staging."""
+        total = sum(written)
+        log.info("staging.bcb_sgs_observation updated: %s rows upserted", total)
+        return total
+
     window = resolve_window()
     raw_refs = extract_to_raw.partial(window=window).expand(series_code=list(SERIES))
     ensure_tables() >> raw_refs
-    raw_to_staging.expand(ref=raw_refs)
+    publish_staging(raw_to_staging.expand(ref=raw_refs))
 
 
 bcb_sgs()

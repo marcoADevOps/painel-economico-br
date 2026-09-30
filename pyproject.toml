@@ -14,5 +14,5 @@ select = ["E", "F", "W", "I", "B", "UP", "AIR"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "dags"]
 addopts = "-ra"

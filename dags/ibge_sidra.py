@@ -15,7 +15,14 @@ from pathlib import Path
 import pendulum
 from airflow.sdk import dag, task
 
-from painel.dag_support import DEFAULT_ARGS, TIMEZONE, WINDOW_PARAMS, dw_connection, run_window
+from painel.dag_support import (
+    DEFAULT_ARGS,
+    STAGING_IBGE,
+    TIMEZONE,
+    WINDOW_PARAMS,
+    dw_connection,
+    run_window,
+)
 from painel.ibge import DATASETS
 
 LOOKBACK_DAYS = 400
@@ -90,10 +97,17 @@ def ibge_sidra():
                 )
         return written
 
+    @task(outlets=[STAGING_IBGE])
+    def publish_staging(written: list[int]) -> int:
+        """Single asset event per run, after every dataset is in staging."""
+        total = sum(written)
+        log.info("staging.ibge_sidra_observation updated: %s rows upserted", total)
+        return total
+
     window = resolve_window()
     raw_refs = extract_to_raw.partial(window=window).expand(dataset_name=list(DATASETS))
     ensure_tables() >> raw_refs
-    raw_to_staging.expand(ref=raw_refs)
+    publish_staging(raw_to_staging.expand(ref=raw_refs))
 
 
 ibge_sidra()

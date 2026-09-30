@@ -5,12 +5,21 @@ from __future__ import annotations
 from contextlib import closing
 from datetime import timedelta
 
-from airflow.sdk import Param
+from airflow.sdk import Asset, Param
 
 from painel.alerts import notify_task_failure
 
 TIMEZONE = "America/Sao_Paulo"
 DW_CONN_ID = "painel_dw"
+
+# Emitted when a source DAG finishes updating its staging table; the marts
+# DAG is scheduled on them.
+STAGING_BCB = Asset(
+    name="staging.bcb_sgs_observation", uri="painel://staging/bcb_sgs_observation"
+)
+STAGING_IBGE = Asset(
+    name="staging.ibge_sidra_observation", uri="painel://staging/ibge_sidra_observation"
+)
 
 DEFAULT_ARGS = {
     "owner": "painel",
