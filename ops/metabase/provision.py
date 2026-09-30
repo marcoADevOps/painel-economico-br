@@ -40,9 +40,14 @@ def text(content, row, col, width, height):
     return {"text": content.strip(), "row": row, "col": col, "size_x": width, "size_y": height}
 
 
-def line(x, metrics=None, series=None):
+def line(x, metrics=None, series=None, gaps=False):
     viz = {"graph.dimensions": [x] + ([series] if series else []),
-           "graph.metrics": metrics or ["valor"]}
+           "graph.metrics": metrics or ["valor"],
+           # Show every category instead of grouping the tail into "Outros"
+           "graph.max_categories_enabled": False}
+    if gaps:
+        # Leave missing weeks (source gaps) blank instead of drawing across them
+        viz["line.missing"] = "none"
     return viz
 
 
@@ -58,7 +63,7 @@ Selic meta (Copom), IPCA Brasil (IBGE) e dólar PTAX (Banco Central), mês a mê
 O juro real é ex-post: (1 + Selic) / (1 + IPCA 12 meses) − 1.
 O IPCA das tabelas usadas começa em 2012.
 """, 0, 0, 24, 3),
-        question("Selic meta atual (% a.a.)", f"""
+        question("Selic meta (% a.a.)", f"""
 SELECT selic_target AS "Selic meta (% a.a.)" FROM marts.monthly_indicators
 WHERE month = {LATEST_MONTH.format(col="selic_target")}
 """, "scalar", 3, 0, 6, 3),
@@ -66,11 +71,11 @@ WHERE month = {LATEST_MONTH.format(col="selic_target")}
 SELECT ipca_12m AS "IPCA 12 meses (%)" FROM marts.monthly_indicators
 WHERE month = {LATEST_MONTH.format(col="ipca_12m")}
 """, "scalar", 3, 6, 6, 3),
-        question("Juro real ex-post atual (%)", f"""
+        question("Juro real (%)", f"""
 SELECT real_rate_12m AS "Juro real (%)" FROM marts.monthly_indicators
 WHERE month = {LATEST_MONTH.format(col="real_rate_12m")}
 """, "scalar", 3, 12, 6, 3),
-        question("Dólar PTAX (fechamento, R$)", f"""
+        question("Dólar PTAX (R$)", f"""
 SELECT ptax_close AS "PTAX (R$)" FROM marts.monthly_indicators
 WHERE month = {LATEST_MONTH.format(col="ptax_close")}
 """, "scalar", 3, 18, 6, 3),
@@ -105,27 +110,27 @@ REGIONS = {
 # Inflação e desemprego por região
 IPCA (índice geral) por região metropolitana e capital pesquisadas pelo IBGE,
 e taxa de desocupação da PNAD Contínua (trimestral).
-""", 0, 0, 24, 2),
+""", 0, 0, 24, 3),
         question("IPCA 12 meses por localidade (último mês)", """
 SELECT locality_name AS "Localidade", ipca_12m AS "IPCA 12 meses (%)"
 FROM marts.ipca_by_region
 WHERE month = (SELECT max(month) FROM marts.ipca_by_region WHERE ipca_12m IS NOT NULL)
   AND ipca_12m IS NOT NULL
 ORDER BY ipca_12m DESC
-""", "row", 2, 0, 12, 10, **line("Localidade", ["IPCA 12 meses (%)"])),
+""", "row", 3, 0, 12, 12, **line("Localidade", ["IPCA 12 meses (%)"])),
         question("Desocupação por UF (último trimestre)", """
 SELECT locality_name AS "UF", rate AS "Desocupação (%)"
 FROM marts.unemployment_by_region
 WHERE level = 'N3'
   AND quarter_start = (SELECT max(quarter_start) FROM marts.unemployment_by_region)
 ORDER BY rate DESC
-""", "row", 2, 12, 12, 10, **line("UF", ["Desocupação (%)"])),
+""", "bar", 15, 0, 24, 9, **line("UF", ["Desocupação (%)"])),
         question("Desocupação: Brasil e Grandes Regiões (%)", """
 SELECT quarter_start AS "Trimestre", locality_name AS "Região", rate AS "Desocupação (%)"
 FROM marts.unemployment_by_region
 WHERE level IN ('N1', 'N2')
 ORDER BY quarter_start, locality_name
-""", "line", 12, 0, 24, 8, **line("Trimestre", ["Desocupação (%)"], series="Região")),
+""", "line", 3, 12, 12, 12, **line("Trimestre", ["Desocupação (%)"], series="Região")),
     ],
 }
 
@@ -139,19 +144,19 @@ Média semanal (domingo a sábado) dos preços de revenda coletados pela ANP,
 ponderada pelo número de coletas. Lacunas da fonte: ago–out/2020,
 1º semestre de 2022 (não publicado) e uma semana de set/2022.
 """, 0, 0, 24, 3),
-        question("Gasolina: preço médio Brasil (última semana)", """
+        question("Gasolina hoje (R$/l)", """
 SELECT avg_price AS "Gasolina (R$/l)" FROM marts.fuel_prices_weekly
 WHERE level = 'Brasil' AND product = 'GASOLINA'
   AND week_start = (SELECT max(week_start) FROM marts.fuel_prices_weekly
                     WHERE level = 'Brasil' AND product = 'GASOLINA')
 """, "scalar", 3, 0, 8, 3),
-        question("Etanol: preço médio Brasil (última semana)", """
+        question("Etanol hoje (R$/l)", """
 SELECT avg_price AS "Etanol (R$/l)" FROM marts.fuel_prices_weekly
 WHERE level = 'Brasil' AND product = 'ETANOL'
   AND week_start = (SELECT max(week_start) FROM marts.fuel_prices_weekly
                     WHERE level = 'Brasil' AND product = 'ETANOL')
 """, "scalar", 3, 8, 8, 3),
-        question("Diesel S10: preço médio Brasil (última semana)", """
+        question("Diesel S10 hoje (R$/l)", """
 SELECT avg_price AS "Diesel S10 (R$/l)" FROM marts.fuel_prices_weekly
 WHERE level = 'Brasil' AND product = 'DIESEL S10'
   AND week_start = (SELECT max(week_start) FROM marts.fuel_prices_weekly
@@ -162,13 +167,14 @@ SELECT week_start AS "Semana", initcap(product) AS "Produto", avg_price AS "Pre�
 FROM marts.fuel_prices_weekly
 WHERE level = 'Brasil' AND product IN ('GASOLINA', 'ETANOL', 'DIESEL S10')
 ORDER BY week_start, product
-""", "line", 6, 0, 16, 8, **line("Semana", ["Preço médio (R$)"], series="Produto")),
+""", "line", 6, 0, 16, 9,
+           **line("Semana", ["Preço médio (R$)"], series="Produto", gaps=True)),
         question("GLP 13 kg: preço médio Brasil (R$)", """
 SELECT week_start AS "Semana", avg_price AS "GLP 13 kg (R$)"
 FROM marts.fuel_prices_weekly
 WHERE level = 'Brasil' AND product = 'GLP'
 ORDER BY week_start
-""", "line", 6, 16, 8, 8, **line("Semana", ["GLP 13 kg (R$)"])),
+""", "line", 6, 16, 8, 9, **line("Semana", ["GLP 13 kg (R$)"], gaps=True)),
         question("Gasolina por UF (última semana, R$/l)", """
 SELECT state AS "UF", avg_price AS "Gasolina (R$/l)"
 FROM marts.fuel_prices_weekly
@@ -176,7 +182,7 @@ WHERE level = 'UF' AND product = 'GASOLINA'
   AND week_start = (SELECT max(week_start) FROM marts.fuel_prices_weekly
                     WHERE level = 'UF' AND product = 'GASOLINA')
 ORDER BY avg_price DESC
-""", "row", 14, 0, 12, 10, **line("UF", ["Gasolina (R$/l)"])),
+""", "bar", 25, 0, 24, 9, **line("UF", ["Gasolina (R$/l)"])),
         question("Gasolina: 10 municípios mais caros (última semana)", """
 SELECT municipality AS "Município", state AS "UF", avg_price AS "Preço médio (R$/l)",
        samples AS "Coletas"
@@ -186,7 +192,7 @@ WHERE level = 'Município' AND product = 'GASOLINA'
                     WHERE level = 'Município' AND product = 'GASOLINA')
 ORDER BY avg_price DESC
 LIMIT 10
-""", "table", 14, 12, 12, 5),
+""", "table", 15, 0, 12, 10),
         question("Gasolina: 10 municípios mais baratos (última semana)", """
 SELECT municipality AS "Município", state AS "UF", avg_price AS "Preço médio (R$/l)",
        samples AS "Coletas"
@@ -196,7 +202,7 @@ WHERE level = 'Município' AND product = 'GASOLINA'
                     WHERE level = 'Município' AND product = 'GASOLINA')
 ORDER BY avg_price ASC
 LIMIT 10
-""", "table", 19, 12, 12, 5),
+""", "table", 15, 12, 12, 10),
     ],
 }
 
