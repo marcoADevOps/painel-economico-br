@@ -45,6 +45,19 @@ Particularidades da API do SGS, conferidas na documentação oficial e em testes
 - **Período sem dados:** retorna HTTP 404 com `Value(s) not found`. O pipeline trata isso como "sem dados", não como erro.
 - **Instabilidade:** às vezes a API responde HTTP 200 com uma página HTML de erro. Por isso o conteúdo da resposta é validado e a task é repetida.
 
+## Alertas
+
+Quando uma task falha de vez, sem novas tentativas restantes, o `on_failure_callback`
+(`src/painel/alerts.py`) envia uma mensagem no Telegram. Ela traz o DAG, a task, a
+execução, a tentativa, o erro resumido e um link para o log.
+
+- O token do bot e o chat ID ficam apenas no `.env` da VM (`TELEGRAM_BOT_TOKEN`,
+  `TELEGRAM_CHAT_ID`). Sem eles, os alertas são ignorados e o DAG não é afetado.
+- Um erro no envio nunca derruba a task e nunca registra o token nos logs.
+- Parâmetros inválidos na carga manual falham na hora, sem novas tentativas, e o
+  alerta chega em segundos. Para testar os alertas, dispare `bcb_sgs` com `start`
+  depois de `end`.
+
 ## Como rodar
 
 Tudo roda na VM, dentro de contêineres (ver [docs/setup-vm.md](docs/setup-vm.md)):
