@@ -45,6 +45,20 @@ Particularidades da API do SGS, conferidas na documentação oficial e em testes
 - **Período sem dados:** retorna HTTP 404 com `Value(s) not found`. O pipeline trata isso como "sem dados", não como erro.
 - **Instabilidade:** às vezes a API responde HTTP 200 com uma página HTML de erro. Por isso o conteúdo da resposta é validado e a task é repetida.
 
+### `ibge_sidra`: IBGE (SIDRA)
+
+| Conjunto | Tabelas SIDRA | Variáveis | Localidades | Periodicidade |
+|---|---|---|---|---|
+| `ipca` | 1419 (2012–2019) e 7060 (desde 2020) | 63 (variação mensal), 2265 (acumulada em 12 meses), índice geral | Brasil, 10 regiões metropolitanas e 6 capitais | mensal |
+| `desocupacao` | 4099 (PNAD Contínua) | 4099 (taxa de desocupação) | Brasil, Grandes Regiões e UFs | trimestral |
+
+- **Agendamento:** dias úteis às 10h (o IBGE divulga às 9h), com `catchup`.
+- **Janela processada:** os últimos ~13 meses em toda execução, uma requisição por tabela.
+- **Fluxo de dados:** a resposta original vai para `raw.ibge_sidra_response` e os dados tipados para `staging.ibge_sidra_observation`.
+- **Chave natural:** o nível territorial faz parte da chave, porque o ID da localidade se repete entre níveis (Brasil e Norte são os dois `1`).
+- **Sinais especiais do SIDRA:** `-` é zero absoluto. `X`, `..` e `...` não têm valor; essas linhas são descartadas e contadas no log.
+- **Carga de histórico:** disparar manualmente com `start` (os dados começam em 2012).
+
 ## Alertas
 
 Quando uma task falha de vez, sem novas tentativas restantes, o `on_failure_callback`
