@@ -84,6 +84,16 @@ O DAG é disparado por Assets do Airflow sempre que `bcb_sgs`, `ibge_sidra` **ou
 
 O IPCA das tabelas do SIDRA usadas aqui começa em 2012. Por isso, antes de 2012, `monthly_indicators` tem Selic e PTAX, mas não tem IPCA nem juro real.
 
+## Dashboards (Metabase)
+
+Os dashboards são definidos **como código** em `ops/metabase/provision.py` e lêem só a camada `marts`, com um usuário somente leitura.
+
+| Dashboard | Conteúdo |
+|---|---|
+| Indicadores macroeconômicos | Selic meta, IPCA 12 meses, juro real ex-post e PTAX (valores atuais e séries históricas) |
+| Inflação e desemprego por região | IPCA 12 meses por região metropolitana e capital; desocupação por UF e por Grande Região |
+| Combustíveis | preço médio semanal de gasolina, etanol, diesel S10 e GLP; gasolina por UF; os 10 municípios mais caros e os 10 mais baratos |
+
 ## Qualidade de dados
 
 Os dois DAGs de origem rodam uma task `quality_checks` depois de carregar a staging e **antes** de publicar o Asset que dispara os marts. Se alguma checagem falhar, a task falha na hora, sem novas tentativas (repetir não conserta dado ruim), o alerta vai para o Telegram e **os marts não são atualizados com o dado suspeito**.

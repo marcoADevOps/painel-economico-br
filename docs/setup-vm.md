@@ -162,3 +162,47 @@ Monitores configurados na interface (`http://<KUMA_IP>:3001`):
 As notificações vão para o mesmo bot do Telegram usado nos alertas do Airflow.
 
 Reverter: `pct destroy <CT_ID>` no host.
+
+## 7. Metabase (dashboards)
+
+O Metabase roda na VM (`compose.yaml`, porta 3000). A configuração dele (usuários, perguntas, dashboards) fica num banco próprio, `metabase`. Os dashboards leem o warehouse com o usuário `metabase_ro`, que **só tem permissão de leitura no schema `marts`**.
+
+Capacidade (medida numa VM de 4 GB):
+- heap limitado a 640 MB (`-Xmx640m`) e contêiner a 1,25 GB; o processo usa ~1,05 GB;
+- o metaspace **não** é limitado: com 256 MB o Metabase abortava com `OutOfMemoryError: Metaspace`;
+- a VM tem um swapfile de 2 GB com `vm.swappiness=10`, como proteção para picos.
+
+```bash
+# swap (uma vez)
+sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
+echo "/swapfile none swap sw 0 0" | sudo tee -a /etc/fstab
+echo "vm.swappiness=10" | sudo tee /etc/sysctl.d/90-swappiness.conf && sudo sysctl -p /etc/sysctl.d/90-swappiness.conf
+
+# usuários do Postgres: METABASE_DB_PASSWORD e METABASE_READER_PASSWORD no .env.
+# Num volume novo o script roda sozinho; num volume existente, rode uma vez:
+docker cp docker/postgres/20-metabase.sh painel-postgres-1:/tmp/
+docker exec -e METABASE_DB_PASSWORD -e METABASE_READER_PASSWORD painel-postgres-1 bash /tmp/20-metabase.sh
+```
+
+Na interface (`http://<VM_IP>:3000`):
+1. Crie a conta de administrador.
+2. Adicione o PostgreSQL com host `postgres`, porta `5432`, banco `painel`, usuário `metabase_ro` e a senha `METABASE_READER_PASSWORD`.
+3. Em **Admin → Configurações → Autenticação → API keys**, crie uma chave no grupo Administradores e grave-a na VM com `ops/scripts/set-metabase-key.sh` (a chave é lida sem aparecer na tela e fica em `/etc/painel-metabase.env`).
+
+Dashboards como código:
+
+```bash
+sudo python3 ops/metabase/provision.py
+```
+
+O script cria ou atualiza a coleção "Painel Econômico BR", as perguntas e os dashboards definidos em `DASHBOARDS`. Ele é idempotente: as perguntas são reconhecidas pelo nome, e as que saem da definição são arquivadas. Depois de salvar cada pergunta, o script a executa, e termina com erro se alguma consulta falhar.
+
+## Scripts de configuração
+
+Os scripts em `ops/scripts/` gravam segredos na VM sem que eles apareçam na tela ou no histórico do shell. Cada um confere o valor antes de gravar.
+
+| Script | Grava | Onde |
+|---|---|---|
+| `set-telegram.sh` | token do bot e chat ID (descoberto pela API do Telegram) | `/opt/painel/.env` |
+| `set-kuma-push.sh` | Push URL do monitor de backup no Uptime Kuma | `/etc/painel-backup.env` |
+| `set-metabase-key.sh` | API key do Metabase | `/etc/painel-metabase.env` |
