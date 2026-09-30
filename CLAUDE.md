@@ -37,6 +37,7 @@ docker/          Dockerfile e scripts de init do Postgres
 compose.yaml     stack (Airflow, Postgres; Metabase na fase 3)
 .github/workflows/   CI (lint e testes) e deploy
 docs/            diagrama de arquitetura e notas
+ops/             backup (systemd na VM e no host) e Uptime Kuma (LXC)
 ```
 
 ## Windows (laptop de desenvolvimento)

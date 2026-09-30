@@ -85,3 +85,71 @@ do Airflow fica em `http://<VM_IP>:8080`.
 Rollback: em `/opt/painel/.env`, trocar `AIRFLOW_IMAGE` por uma tag anterior
 (`ghcr.io/<owner>/painel-economico-br/airflow:<sha>`) e rodar
 `docker compose up -d`.
+
+## 5. Backup diário do Postgres
+
+O backup roda **fora do Airflow**, por timers do systemd, para funcionar mesmo com o Airflow fora do ar. Os arquivos ficam em `ops/backup/`.
+
+| Onde | O quê | Quando | Retenção |
+|---|---|---|---|
+| VM | `painel-backup.timer`: `pg_dump` (formato custom) dos bancos `airflow` e `painel`, mais as roles; confere se cada dump pode ser lido e grava `SHA256SUMS` em `/var/backups/painel/<data>/` | 03:30 | 7 dias |
+| Host Proxmox | `painel-backup-pull.timer`: puxa as cópias por `rsync`, confere as somas e guarda em `/var/backups/painel-vm/` | 04:30 | 14 dias |
+
+Como o acesso do host à VM é restrito:
+- o host usa uma chave dedicada, e na VM o usuário `painelbak` só aceita `rrsync -ro` na pasta de backup (sem shell e sem escrita);
+- a VM não guarda nenhuma credencial do host;
+- a cópia não usa `--delete`, então apagar os backups na VM não apaga as cópias do host.
+
+```bash
+# VM
+sudo groupadd --system painelbak
+sudo useradd --system --gid painelbak --home-dir /var/lib/painelbak --create-home --shell /bin/sh painelbak
+sudo install -m 750 ops/backup/backup-postgres.sh /usr/local/sbin/painel-backup-postgres
+sudo install -m 644 ops/backup/painel-backup.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now painel-backup.timer
+# authorized_keys do painelbak (chave pública gerada no host):
+#   restrict,command="/usr/bin/rrsync -ro /var/backups/painel" ssh-ed25519 AAAA... proxmox-painel-backup-pull
+
+# Host Proxmox
+ssh-keygen -t ed25519 -N "" -f /root/.ssh/painel_backup_pull
+install -m 750 ops/backup/proxmox/painel-backup-pull.sh /usr/local/sbin/painel-backup-pull
+install -m 644 ops/backup/proxmox/painel-backup-pull.{service,timer} /etc/systemd/system/
+echo "VM_HOST=<VM_IP>" > /etc/painel-backup-pull.env && chmod 600 /etc/painel-backup-pull.env
+systemctl daemon-reload && systemctl enable --now painel-backup-pull.timer
+```
+
+Restauração (testada em 2026-09-30 num banco temporário, com as mesmas contagens do original):
+
+```bash
+docker exec painel-postgres-1 sh -c 'createdb -U "$POSTGRES_USER" restore_test'
+sudo cat /var/backups/painel/<data>/painel.dump \
+  | docker exec -i painel-postgres-1 sh -c 'pg_restore -U "$POSTGRES_USER" -d restore_test --no-owner'
+```
+
+Reverter: `systemctl disable --now painel-backup.timer` na VM e `painel-backup-pull.timer` no host.
+
+## 6. Monitoramento (Uptime Kuma)
+
+O Uptime Kuma roda num LXC separado (`uptime-01`), fora da VM do Airflow. Assim ele continua avisando quando a própria VM cai.
+
+```bash
+# Host Proxmox: LXC Debian 12 sem privilégios (nesting para Docker)
+pct create <CT_ID> local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst \
+  --hostname uptime-01 --cores 1 --memory 512 --swap 256 --rootfs local-lvm:8 \
+  --unprivileged 1 --features nesting=1,keyctl=1 --onboot 1 \
+  --net0 name=eth0,bridge=vmbr0,ip=<KUMA_IP>/24,gw=<GATEWAY>
+# No LXC: Docker (repositório oficial para Debian) e depois
+cd /opt/uptime-kuma && docker compose up -d   # ops/uptime-kuma/compose.yaml
+```
+
+Monitores configurados na interface (`http://<KUMA_IP>:3001`):
+
+| Monitor | Tipo | Alvo | Regra |
+|---|---|---|---|
+| Airflow scheduler | HTTP(s) - Json Query | `http://<VM_IP>:8080/api/v2/monitor/health` | `scheduler.status` == `healthy` |
+| VM airflow-01 | Ping | `<VM_IP>` | responde ao ping |
+| Backup Postgres | Push | URL gerada pelo Kuma, gravada em `/etc/painel-backup.env` na VM | um push a cada 25 h, no máximo |
+
+As notificações vão para o mesmo bot do Telegram usado nos alertas do Airflow.
+
+Reverter: `pct destroy <CT_ID>` no host.

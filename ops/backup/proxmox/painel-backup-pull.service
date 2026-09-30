@@ -1,0 +1,9 @@
+[Unit]
+Description=Pull Painel Econômico BR backups from the VM
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/painel-backup-pull.env
+ExecStart=/usr/local/sbin/painel-backup-pull

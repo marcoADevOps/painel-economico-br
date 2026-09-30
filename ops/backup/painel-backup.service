@@ -1,0 +1,10 @@
+[Unit]
+Description=Painel Econômico BR - Postgres backup
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/painel-backup-postgres
+Nice=10
+IOSchedulingClass=idle
