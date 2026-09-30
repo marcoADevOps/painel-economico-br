@@ -1,0 +1,18 @@
+[project]
+name = "painel-economico-br"
+version = "0.1.0"
+description = "Pipeline de dados da economia brasileira com Apache Airflow"
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "dags", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "AIR"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra"

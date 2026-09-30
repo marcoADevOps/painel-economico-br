@@ -1,0 +1,3 @@
+# Runtime dependencies (versions resolved by the Airflow constraints file)
+apache-airflow-providers-postgres
+requests
