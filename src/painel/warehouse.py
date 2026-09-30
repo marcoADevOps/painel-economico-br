@@ -83,3 +83,80 @@ def upsert_staging(
         cur.executemany(UPSERT_STAGING, values)
     conn.commit()
     return len(values)
+
+
+# --- IBGE SIDRA -----------------------------------------------------------------
+
+UPSERT_IBGE_RAW = """
+    INSERT INTO raw.ibge_sidra_response
+        (dataset, table_id, period_start, period_end, payload, loaded_at)
+    VALUES (%s, %s, %s, %s, %s::jsonb, now())
+    ON CONFLICT (dataset, table_id, period_start, period_end)
+    DO UPDATE SET payload = EXCLUDED.payload, loaded_at = now()
+"""
+
+SELECT_IBGE_RAW = """
+    SELECT payload
+    FROM raw.ibge_sidra_response
+    WHERE dataset = %s AND table_id = %s AND period_start = %s AND period_end = %s
+"""
+
+UPSERT_IBGE_STAGING = """
+    INSERT INTO staging.ibge_sidra_observation (
+        dataset, variable_id, variable_name, unit, category_id, territorial_level,
+        locality_id, locality_name, period, ref_date, value, table_id, loaded_at
+    )
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
+    ON CONFLICT (dataset, variable_id, category_id, territorial_level, locality_id, period)
+    DO UPDATE SET
+        variable_name = EXCLUDED.variable_name,
+        unit = EXCLUDED.unit,
+        locality_name = EXCLUDED.locality_name,
+        ref_date = EXCLUDED.ref_date,
+        value = EXCLUDED.value,
+        table_id = EXCLUDED.table_id,
+        loaded_at = now()
+    WHERE (staging.ibge_sidra_observation.value, staging.ibge_sidra_observation.table_id,
+           staging.ibge_sidra_observation.locality_name)
+        IS DISTINCT FROM (EXCLUDED.value, EXCLUDED.table_id, EXCLUDED.locality_name)
+"""
+
+
+def save_ibge_raw(
+    conn, dataset: str, table_id: int, period_start: int, period_end: int, payload: list
+) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            UPSERT_IBGE_RAW, (dataset, table_id, period_start, period_end, json.dumps(payload))
+        )
+    conn.commit()
+
+
+def read_ibge_raw(
+    conn, dataset: str, table_id: int, period_start: int, period_end: int
+) -> list | None:
+    with conn.cursor() as cur:
+        cur.execute(SELECT_IBGE_RAW, (dataset, table_id, period_start, period_end))
+        row = cur.fetchone()
+    return row[0] if row else None
+
+
+def upsert_ibge_staging(conn, dataset: str, table_id: int, observations: Iterable) -> int:
+    """Upsert painel.ibge.Observation rows; duplicates by natural key keep the last one."""
+    unique = {
+        (o.variable_id, o.category_id, o.territorial_level, o.locality_id, o.period): o
+        for o in observations
+    }
+    values = [
+        (
+            dataset, o.variable_id, o.variable_name, o.unit, o.category_id, o.territorial_level,
+            o.locality_id, o.locality_name, o.period, o.ref_date, o.value, table_id,
+        )
+        for o in unique.values()
+    ]
+    if not values:
+        return 0
+    with conn.cursor() as cur:
+        cur.executemany(UPSERT_IBGE_STAGING, values)
+    conn.commit()
+    return len(values)

@@ -9,30 +9,19 @@ gap after downtime. For historical loads, trigger manually with `start`
 from __future__ import annotations
 
 import logging
-from contextlib import closing
 from datetime import date, timedelta
 from pathlib import Path
 
 import pendulum
-from airflow.sdk import Param, dag, get_current_context, task
-from airflow.sdk.exceptions import AirflowFailException
+from airflow.sdk import dag, task
 
-from painel.alerts import notify_task_failure
 from painel.bcb import SERIES
+from painel.dag_support import DEFAULT_ARGS, TIMEZONE, WINDOW_PARAMS, dw_connection, run_window
 
-TIMEZONE = "America/Sao_Paulo"
 LOOKBACK_DAYS = 10
-DW_CONN_ID = "painel_dw"
 DDL_FILE = Path(__file__).resolve().parents[1] / "sql" / "bcb_sgs.sql"
 
 log = logging.getLogger(__name__)
-
-
-def _dw_connection():
-    from airflow.providers.postgres.hooks.postgres import PostgresHook
-
-    # closing(): a psycopg2 connection's own context manager does not close it
-    return closing(PostgresHook(postgres_conn_id=DW_CONN_ID).get_conn())
 
 
 @dag(
@@ -44,29 +33,8 @@ def _dw_connection():
     start_date=pendulum.datetime(2026, 9, 1, tz=TIMEZONE),
     catchup=True,
     max_active_runs=1,
-    default_args={
-        "owner": "painel",
-        # Waits of ~2, 4 and 8 min: a persistent failure is alerted in ~15 min.
-        "retries": 3,
-        "retry_delay": timedelta(minutes=2),
-        "retry_exponential_backoff": True,
-        "max_retry_delay": timedelta(minutes=10),
-        "on_failure_callback": notify_task_failure,
-    },
-    params={
-        "start": Param(
-            None,
-            type=["null", "string"],
-            format="date",
-            description="Historical load: first date (YYYY-MM-DD). Empty = lookback window.",
-        ),
-        "end": Param(
-            None,
-            type=["null", "string"],
-            format="date",
-            description="Historical load: last date (YYYY-MM-DD). Empty = today.",
-        ),
-    },
+    default_args=DEFAULT_ARGS,
+    params=WINDOW_PARAMS,
     tags=["bcb", "sgs", "ingestion"],
     doc_md=__doc__,
 )
@@ -75,32 +43,12 @@ def bcb_sgs():
     def ensure_tables() -> None:
         from painel.warehouse import run_sql_file
 
-        with _dw_connection() as conn:
+        with dw_connection() as conn:
             run_sql_file(conn, DDL_FILE)
 
     @task
     def resolve_window() -> dict[str, str]:
-        context = get_current_context()
-        params = context["params"]
-        # Manual runs in Airflow 3 may have no logical_date; fall back to run_after.
-        run_date = context.get("logical_date") or context["dag_run"].run_after
-        run_day = pendulum.instance(run_date).in_timezone(TIMEZONE).date()
-
-        if params.get("start"):
-            # Bad parameters are a user error: fail at once (no retries) so the
-            # alert arrives immediately.
-            try:
-                start = date.fromisoformat(params["start"])
-                end = date.fromisoformat(params["end"]) if params.get("end") else run_day
-            except ValueError as exc:
-                raise AirflowFailException(f"invalid start/end parameter: {exc}") from exc
-        else:
-            end = run_day
-            start = end - timedelta(days=LOOKBACK_DAYS)
-
-        if start > end:
-            raise AirflowFailException(f"start {start} is after end {end}")
-        return {"start": start.isoformat(), "end": end.isoformat()}
+        return run_window(LOOKBACK_DAYS)
 
     @task
     def extract_to_raw(series_code: int, window: dict[str, str]) -> dict:
@@ -114,7 +62,7 @@ def bcb_sgs():
         settled_before = end - timedelta(days=LOOKBACK_DAYS)
         session = build_session()
         fetched = skipped = 0
-        with _dw_connection() as conn:
+        with dw_connection() as conn:
             for chunk_start, chunk_end in split_window(start, end):
                 if chunk_end < settled_before and raw_window_exists(
                     conn, series_code, chunk_start, chunk_end
@@ -138,7 +86,7 @@ def bcb_sgs():
 
         series = SERIES[ref["series_code"]]
         start, end = date.fromisoformat(ref["start"]), date.fromisoformat(ref["end"])
-        with _dw_connection() as conn:
+        with dw_connection() as conn:
             rows = [
                 row
                 for payload in read_raw_payloads(conn, series.code, start, end)
