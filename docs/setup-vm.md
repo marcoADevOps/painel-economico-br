@@ -49,12 +49,39 @@ Rotação de logs dos contêineres, para não encher o disco (`/etc/docker/daemo
 }
 ```
 
-## 3. Subir o ambiente
+## 3. Runner self-hosted do GitHub Actions
+
+O runner roda com um usuário dedicado (`gh-runner`, no grupo `docker`) e é
+registrado só neste repositório. Como o repositório é público, os workflows
+usam o runner apenas em push na `main` e em execuções manuais; PRs rodam em
+runners hospedados pelo GitHub. Em **Settings → Actions → General**, exigir
+aprovação para workflows de PRs de forks.
 
 ```bash
-cd ~/painel-economico-br
-cp .env.example .env   # preencher; chmod 600 .env
-docker compose up -d --build --wait
+sudo useradd -m -s /bin/bash -G docker gh-runner
+# como gh-runner, em ~/actions-runner: baixar a versão atual do runner
+# (github.com/actions/runner/releases), conferir o SHA-256 e extrair
+sudo -u gh-runner bash -c 'cd ~/actions-runner && ./config.sh --unattended \
+  --url https://github.com/<OWNER>/painel-economico-br --name airflow-01 \
+  --labels painel,airflow-01 --token <TOKEN>'
+# o home do gh-runner é 750: rodar o svc.sh como root, de dentro da pasta
+sudo bash -c 'cd /home/gh-runner/actions-runner && ./svc.sh install gh-runner && ./svc.sh start'
 ```
 
-A interface do Airflow fica em `http://<VM_IP>:8080`.
+## 4. Diretório de deploy
+
+O deploy (`.github/workflows/ci-cd.yml`) roda em `/opt/painel`. O `.env` com
+os segredos é criado uma única vez ali e nunca é sobrescrito pelo workflow:
+
+```bash
+sudo install -d -o gh-runner -g gh-runner -m 750 /opt/painel
+sudo install -o gh-runner -g gh-runner -m 600 .env /opt/painel/.env
+```
+
+A cada push na `main`, o workflow roda lint e testes, publica a imagem no
+GHCR, copia o `compose.yaml` para `/opt/painel` e sobe a stack. A interface
+do Airflow fica em `http://<VM_IP>:8080`.
+
+Rollback: em `/opt/painel/.env`, trocar `AIRFLOW_IMAGE` por uma tag anterior
+(`ghcr.io/<owner>/painel-economico-br/airflow:<sha>`) e rodar
+`docker compose up -d`.

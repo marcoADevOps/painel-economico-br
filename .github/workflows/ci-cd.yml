@@ -1,0 +1,75 @@
+name: CI/CD
+
+# Security: this repository is public and the self-hosted runner lives on the
+# homelab network. Only push to main and manual runs (both require write
+# access) use it. Pull requests run on GitHub-hosted runners.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Lint and tests
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'self-hosted' }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build test image
+        run: docker build -f docker/Dockerfile --target test -t painel-airflow:test .
+
+      - name: Ruff
+        run: docker run --rm painel-airflow:test python -m ruff check .
+
+      - name: Pytest
+        run: docker run --rm painel-airflow:test python -m pytest
+
+  deploy:
+    name: Build, push and deploy
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: self-hosted
+    concurrency: deploy
+    permissions:
+      contents: read
+      packages: write
+    env:
+      DEPLOY_DIR: /opt/painel
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build and push runtime image to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}/airflow"
+          echo "IMAGE_REF=${IMAGE}:${GITHUB_SHA::12}" >> "$GITHUB_ENV"
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker build -f docker/Dockerfile --target runtime \
+            -t "${IMAGE}:${GITHUB_SHA::12}" -t "${IMAGE}:latest" .
+          docker push "${IMAGE}:${GITHUB_SHA::12}"
+          docker push "${IMAGE}:latest"
+          docker logout ghcr.io
+
+      # .env (secrets) lives only on the VM and is never overwritten here.
+      # AIRFLOW_IMAGE is recorded in it so manual `docker compose` commands
+      # use the deployed image. Rollback: set it to a previous tag and run
+      # `docker compose up -d` in $DEPLOY_DIR.
+      - name: Deploy with Docker Compose
+        run: |
+          test -f "$DEPLOY_DIR/.env" || { echo "::error::$DEPLOY_DIR/.env missing"; exit 1; }
+          install -m 644 compose.yaml "$DEPLOY_DIR/compose.yaml"
+          rm -rf "$DEPLOY_DIR/docker" && cp -r docker "$DEPLOY_DIR/docker"
+          sed -i '/^AIRFLOW_IMAGE=/d' "$DEPLOY_DIR/.env"
+          echo "AIRFLOW_IMAGE=${IMAGE_REF}" >> "$DEPLOY_DIR/.env"
+          cd "$DEPLOY_DIR"
+          docker compose up -d --no-build --remove-orphans --wait --wait-timeout 300
+          docker compose ps
+
+      - name: Prune old images
+        if: always()
+        run: docker image prune -af --filter "until=168h"
