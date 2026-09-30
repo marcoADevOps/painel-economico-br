@@ -3,7 +3,13 @@ from decimal import Decimal
 
 import pytest
 
-from painel.bcb import BcbApiError, fetch_series, parse_observations, split_window
+from painel.bcb import (
+    BcbApiError,
+    fetch_series,
+    fetch_series_with_retry,
+    parse_observations,
+    split_window,
+)
 from painel.warehouse import dedupe_by_date
 
 
@@ -20,13 +26,18 @@ class FakeResponse:
 
 
 class FakeSession:
-    def __init__(self, response):
-        self.response = response
+    """Returns the given responses in order (the last one repeats)."""
+
+    def __init__(self, *responses):
+        self.responses = list(responses)
         self.calls = []
 
     def get(self, url, params, timeout):
         self.calls.append((url, params))
-        return self.response
+        return self.responses[min(len(self.calls), len(self.responses)) - 1]
+
+
+HTML_ERROR = FakeResponse(200, "<!DOCTYPE html><html>Bad request</html>", "text/html")
 
 
 # --- split_window -----------------------------------------------------------
@@ -82,8 +93,7 @@ def test_fetch_series_not_found_means_no_data():
 
 
 def test_fetch_series_html_with_200_is_an_error():
-    html = '<?xml version="1.0"?><!DOCTYPE html><html>Requisição inválida</html>'
-    session = FakeSession(FakeResponse(200, html, content_type="text/html"))
+    session = FakeSession(HTML_ERROR)
 
     with pytest.raises(BcbApiError, match="not JSON"):
         fetch_series(session, 432, date(2026, 9, 1), date(2026, 9, 29))
@@ -94,6 +104,43 @@ def test_fetch_series_window_too_large_is_an_error():
 
     with pytest.raises(BcbApiError, match="HTTP 406"):
         fetch_series(session, 1, date(2010, 1, 1), date(2026, 9, 29))
+
+
+# --- fetch_series_with_retry ------------------------------------------------
+
+
+def test_retry_recovers_from_transient_html_page():
+    ok = FakeResponse(200, '[{"data": "01/09/2026", "valor": "15.00"}]')
+    session = FakeSession(HTML_ERROR, HTML_ERROR, ok)
+    waits = []
+
+    payload = fetch_series_with_retry(
+        session, 432, date(2026, 9, 1), date(2026, 9, 1), wait_seconds=10, sleep=waits.append
+    )
+
+    assert payload == [{"data": "01/09/2026", "valor": "15.00"}]
+    assert len(session.calls) == 3
+    assert waits == [10, 20]
+
+
+def test_retry_gives_up_after_all_attempts():
+    session = FakeSession(HTML_ERROR)
+
+    with pytest.raises(BcbApiError, match="not JSON"):
+        fetch_series_with_retry(
+            session, 432, date(2026, 9, 1), date(2026, 9, 1), attempts=3, sleep=lambda _: None
+        )
+    assert len(session.calls) == 3
+
+
+def test_retry_does_not_repeat_client_errors():
+    session = FakeSession(FakeResponse(406, '{"error":"janela de no máximo 10 anos"}'))
+
+    with pytest.raises(BcbApiError, match="HTTP 406"):
+        fetch_series_with_retry(
+            session, 1, date(2010, 1, 1), date(2026, 9, 29), sleep=lambda _: None
+        )
+    assert len(session.calls) == 1
 
 
 # --- parse_observations -----------------------------------------------------

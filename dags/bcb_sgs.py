@@ -94,22 +94,32 @@ def bcb_sgs():
 
     @task
     def extract_to_raw(series_code: int, window: dict[str, str]) -> dict:
-        from painel.bcb import build_session, fetch_series, split_window
-        from painel.warehouse import save_raw
+        from painel.bcb import build_session, fetch_series_with_retry, split_window
+        from painel.warehouse import raw_window_exists, save_raw
 
         start, end = date.fromisoformat(window["start"]), date.fromisoformat(window["end"])
+        # Windows ending before this date are settled: if already in raw, a
+        # retry or re-triggered historical load skips them instead of
+        # downloading everything again. Recent windows are always refreshed.
+        settled_before = end - timedelta(days=LOOKBACK_DAYS)
         session = build_session()
-        observations = 0
+        fetched = skipped = 0
         with _dw_connection() as conn:
             for chunk_start, chunk_end in split_window(start, end):
-                payload = fetch_series(session, series_code, chunk_start, chunk_end)
+                if chunk_end < settled_before and raw_window_exists(
+                    conn, series_code, chunk_start, chunk_end
+                ):
+                    skipped += 1
+                    continue
+                payload = fetch_series_with_retry(session, series_code, chunk_start, chunk_end)
                 save_raw(conn, series_code, chunk_start, chunk_end, payload)
-                observations += len(payload)
+                fetched += 1
                 log.info(
                     "series %s %s..%s: %s rows", series_code, chunk_start, chunk_end, len(payload)
                 )
+        log.info("series %s: %s windows fetched, %s already in raw", series_code, fetched, skipped)
         # Only a reference goes through XCom; the data stays in the raw table.
-        return {"series_code": series_code, **window, "observations": observations}
+        return {"series_code": series_code, **window}
 
     @task
     def raw_to_staging(ref: dict) -> int:

@@ -19,6 +19,11 @@ UPSERT_RAW = """
     DO UPDATE SET payload = EXCLUDED.payload, loaded_at = now()
 """
 
+EXISTS_RAW = """
+    SELECT 1 FROM raw.bcb_sgs_response
+    WHERE series_code = %s AND window_start = %s AND window_end = %s
+"""
+
 SELECT_RAW = """
     SELECT payload
     FROM raw.bcb_sgs_response
@@ -46,6 +51,12 @@ def save_raw(conn, series_code: int, window_start: date, window_end: date, paylo
     with conn.cursor() as cur:
         cur.execute(UPSERT_RAW, (series_code, window_start, window_end, json.dumps(payload)))
     conn.commit()
+
+
+def raw_window_exists(conn, series_code: int, window_start: date, window_end: date) -> bool:
+    with conn.cursor() as cur:
+        cur.execute(EXISTS_RAW, (series_code, window_start, window_end))
+        return cur.fetchone() is not None
 
 
 def read_raw_payloads(conn, series_code: int, start: date, end: date) -> list[list]:

@@ -13,6 +13,9 @@ Checked against the official catalog (dadosabertos.bcb.gov.br) on 2026-09-30:
 from __future__ import annotations
 
 import json
+import logging
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
@@ -27,6 +30,8 @@ REQUEST_TIMEOUT = (10, 60)  # connect, read (seconds)
 
 # The API allows 10 years; smaller windows are faster and fail less.
 MAX_WINDOW_DAYS = 366
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -43,7 +48,15 @@ SERIES: dict[int, Series] = {
 
 
 class BcbApiError(RuntimeError):
-    """The API answered with something that is not valid series data."""
+    """The API answered with something that is not valid series data.
+
+    retryable: the failure looks transient (gateway HTML page, 5xx, 429) and the
+    same request may succeed if repeated.
+    """
+
+    def __init__(self, message: str, retryable: bool = False):
+        super().__init__(message)
+        self.retryable = retryable
 
 
 def build_session() -> requests.Session:
@@ -93,7 +106,8 @@ def fetch_series(
         return []
     if response.status_code != 200:
         raise BcbApiError(
-            f"series {code} {start}..{end}: HTTP {response.status_code}: {response.text[:200]}"
+            f"series {code} {start}..{end}: HTTP {response.status_code}: {response.text[:200]}",
+            retryable=response.status_code == 429 or response.status_code >= 500,
         )
 
     try:
@@ -101,12 +115,39 @@ def fetch_series(
     except (json.JSONDecodeError, ValueError) as exc:
         raise BcbApiError(
             f"series {code} {start}..{end}: response is not JSON "
-            f"(content-type {response.headers.get('Content-Type')!r})"
+            f"(content-type {response.headers.get('Content-Type')!r})",
+            retryable=True,
         ) from exc
 
     if not isinstance(payload, list):
         raise BcbApiError(f"series {code} {start}..{end}: unexpected payload {str(payload)[:200]}")
     return payload
+
+
+def fetch_series_with_retry(
+    session: requests.Session,
+    code: int,
+    start: date,
+    end: date,
+    attempts: int = 3,
+    wait_seconds: float = 20,
+    sleep: Callable[[float], None] = time.sleep,
+) -> list[dict[str, str]]:
+    """fetch_series, repeating only this window on transient failures.
+
+    Retrying here keeps one bad response from failing (and restarting) a task
+    that has already downloaded many other windows.
+    """
+    for attempt in range(1, attempts + 1):
+        try:
+            return fetch_series(session, code, start, end)
+        except BcbApiError as exc:
+            if not exc.retryable or attempt == attempts:
+                raise
+            delay = wait_seconds * attempt
+            log.warning("attempt %s/%s failed (%s); retrying in %ss", attempt, attempts, exc, delay)
+            sleep(delay)
+    raise AssertionError("unreachable")
 
 
 def parse_observations(payload: list[dict[str, str]]) -> list[tuple[date, Decimal]]:
