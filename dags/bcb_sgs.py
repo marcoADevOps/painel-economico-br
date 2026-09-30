@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pendulum
 from airflow.sdk import Param, dag, get_current_context, task
+from airflow.sdk.exceptions import AirflowFailException
 
 from painel.alerts import notify_task_failure
 from painel.bcb import SERIES
@@ -84,14 +85,19 @@ def bcb_sgs():
         run_day = pendulum.instance(run_date).in_timezone(TIMEZONE).date()
 
         if params.get("start"):
-            start = date.fromisoformat(params["start"])
-            end = date.fromisoformat(params["end"]) if params.get("end") else run_day
+            # Bad parameters are a user error: fail at once (no retries) so the
+            # alert arrives immediately.
+            try:
+                start = date.fromisoformat(params["start"])
+                end = date.fromisoformat(params["end"]) if params.get("end") else run_day
+            except ValueError as exc:
+                raise AirflowFailException(f"invalid start/end parameter: {exc}") from exc
         else:
             end = run_day
             start = end - timedelta(days=LOOKBACK_DAYS)
 
         if start > end:
-            raise ValueError(f"start {start} is after end {end}")
+            raise AirflowFailException(f"start {start} is after end {end}")
         return {"start": start.isoformat(), "end": end.isoformat()}
 
     @task
