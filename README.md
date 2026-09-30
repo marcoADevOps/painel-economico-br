@@ -71,6 +71,19 @@ O DAG é disparado por Assets do Airflow sempre que `bcb_sgs` **ou** `ibge_sidra
 
 O IPCA das tabelas do SIDRA usadas aqui começa em 2012. Por isso, antes de 2012, `monthly_indicators` tem Selic e PTAX, mas não tem IPCA nem juro real.
 
+## Qualidade de dados
+
+Os dois DAGs de origem rodam uma task `quality_checks` depois de carregar a staging e **antes** de publicar o Asset que dispara os marts. Se alguma checagem falhar, a task falha na hora, sem novas tentativas (repetir não conserta dado ruim), o alerta vai para o Telegram e **os marts não são atualizados com o dado suspeito**.
+
+| Checagem | BCB | IBGE |
+|---|---|---|
+| Duplicados | uma linha por série e data | uma linha por conjunto, variável, categoria, nível, localidade e período |
+| Nulos | colunas obrigatórias preenchidas | idem |
+| Faixa plausível | Selic entre 0 e 50% a.a.; PTAX entre R$ 0,50 e R$ 20 | IPCA mensal entre −5% e 10%; IPCA 12 meses entre −10% e 100%; desocupação entre 0 e 40% |
+| Atraso | Selic e PTAX com no máximo 7 dias | IPCA Brasil com no máximo 80 dias; desocupação com no máximo 240 dias (a data de referência é o início do período) |
+
+O atraso é medido em relação à data da execução (`as_of`), nunca em relação a "agora". Cada checagem é uma consulta SQL em `src/painel/quality.py` que retorna as linhas problemáticas: zero linhas significa que passou.
+
 ## Alertas
 
 Quando uma task falha de vez, sem novas tentativas restantes, o `on_failure_callback`

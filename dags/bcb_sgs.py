@@ -21,6 +21,7 @@ from painel.dag_support import (
     STAGING_BCB,
     TIMEZONE,
     WINDOW_PARAMS,
+    check_quality,
     dw_connection,
     run_window,
 )
@@ -105,17 +106,24 @@ def bcb_sgs():
         )
         return written
 
+    @task
+    def quality_checks(written: list[int], window: dict[str, str]) -> int:
+        """Gate: bad staging data fails here and is never published to the marts."""
+        from painel.quality import BCB_CHECKS
+
+        check_quality(BCB_CHECKS, as_of=window["end"])
+        return sum(written)
+
     @task(outlets=[STAGING_BCB])
-    def publish_staging(written: list[int]) -> int:
+    def publish_staging(total: int) -> int:
         """Single asset event per run, after every series is in staging."""
-        total = sum(written)
         log.info("staging.bcb_sgs_observation updated: %s rows upserted", total)
         return total
 
     window = resolve_window()
     raw_refs = extract_to_raw.partial(window=window).expand(series_code=list(SERIES))
     ensure_tables() >> raw_refs
-    publish_staging(raw_to_staging.expand(ref=raw_refs))
+    publish_staging(quality_checks(raw_to_staging.expand(ref=raw_refs), window))
 
 
 bcb_sgs()

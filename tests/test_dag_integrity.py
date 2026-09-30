@@ -47,3 +47,10 @@ def test_every_mart_has_a_build_script():
     for name in marts_module.MARTS:
         assert (marts_module.SQL_DIR / f"{name}.sql").is_file(), name
     assert (marts_module.SQL_DIR / "ddl.sql").is_file()
+
+
+@pytest.mark.parametrize("dag_id", ["bcb_sgs", "ibge_sidra"])
+def test_staging_is_published_only_after_quality_checks(dag_bag, dag_id):
+    dag = dag_bag.dags[dag_id]
+    assert dag.get_task("publish_staging").upstream_task_ids == {"quality_checks"}
+    assert dag.get_task("quality_checks").upstream_task_ids >= {"raw_to_staging"}

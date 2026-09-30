@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from contextlib import closing
-from datetime import timedelta
+from datetime import date, timedelta
 
 from airflow.sdk import Asset, Param
 
@@ -55,6 +55,23 @@ def dw_connection():
     from airflow.providers.postgres.hooks.postgres import PostgresHook
 
     return closing(PostgresHook(postgres_conn_id=DW_CONN_ID).get_conn())
+
+
+def check_quality(checks: tuple, as_of: str) -> None:
+    """Run data quality checks inside a task; any violation fails it without retries.
+
+    Retrying cannot fix bad data, so fail at once and let the alert go out.
+    """
+    from airflow.sdk.exceptions import AirflowFailException
+
+    from painel.quality import DataQualityError, assert_quality, run_checks
+
+    with dw_connection() as conn:
+        results = run_checks(conn, checks, date.fromisoformat(as_of))
+    try:
+        assert_quality(results)
+    except DataQualityError as exc:
+        raise AirflowFailException(str(exc)) from exc
 
 
 def run_window(lookback_days: int) -> dict[str, str]:
