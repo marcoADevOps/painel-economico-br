@@ -16,6 +16,7 @@ from pathlib import Path
 import pendulum
 from airflow.sdk import Param, dag, get_current_context, task
 
+from painel.alerts import notify_task_failure
 from painel.bcb import SERIES
 
 TIMEZONE = "America/Sao_Paulo"
@@ -47,6 +48,7 @@ def _dw_connection():
         "retries": 3,
         "retry_delay": timedelta(minutes=5),
         "retry_exponential_backoff": True,
+        "on_failure_callback": notify_task_failure,
     },
     params={
         "start": Param(

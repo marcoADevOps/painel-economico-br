@@ -16,9 +16,14 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-apiserver:8080/execution/
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
     AIRFLOW__API__WORKERS: "1"
+    # Used to build log links in alerts
+    AIRFLOW__API__BASE_URL: ${AIRFLOW_BASE_URL:-http://localhost:8080}
     AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET:?set AIRFLOW_JWT_SECRET in .env}
     AIRFLOW__API_AUTH__JWT_ISSUER: painel
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
+    # Failure alerts (src/painel/alerts.py); empty = alerts disabled
+    TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+    TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
     # Warehouse connection used by the DAGs (conn_id: painel_dw)
     AIRFLOW_CONN_PAINEL_DW: postgresql://${WAREHOUSE_USER}:${WAREHOUSE_PASSWORD}@postgres:5432/${WAREHOUSE_DB}
   volumes:
