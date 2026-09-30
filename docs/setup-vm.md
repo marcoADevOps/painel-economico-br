@@ -68,7 +68,14 @@ sudo -u gh-runner bash -c 'cd ~/actions-runner && ./config.sh --unattended \
 sudo bash -c 'cd /home/gh-runner/actions-runner && ./svc.sh install gh-runner && ./svc.sh start'
 ```
 
-## 4. Diretório de deploy
+## 4. Diretório de deploy e arquivos originais
+
+Os arquivos originais da ANP ficam no host da VM, fora do banco. A pasta precisa existir antes do primeiro deploy e pertencer ao usuário do Airflow nos contêineres (uid 50000). Sem isso, o Docker cria a pasta como root e as tasks não conseguem gravar:
+
+```bash
+sudo install -d -o 50000 -g 0 -m 775 /var/lib/painel/raw
+```
+
 
 O deploy (`.github/workflows/ci-cd.yml`) roda em `/opt/painel`. O `.env` com
 os segredos é criado uma única vez ali e nunca é sobrescrito pelo workflow:
@@ -89,6 +96,8 @@ Rollback: em `/opt/painel/.env`, trocar `AIRFLOW_IMAGE` por uma tag anterior
 ## 5. Backup diário do Postgres
 
 O backup roda **fora do Airflow**, por timers do systemd, para funcionar mesmo com o Airflow fora do ar. Os arquivos ficam em `ops/backup/`.
+
+Os arquivos originais da ANP (`/var/lib/painel/raw`) nunca mudam. Por isso eles não entram no dump: o script os espelha de forma incremental em `/var/backups/painel/raw/` (sem `--delete` e sem rotação), e o host copia só os arquivos novos.
 
 | Onde | O quê | Quando | Retenção |
 |---|---|---|---|

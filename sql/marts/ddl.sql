@@ -40,3 +40,21 @@ CREATE TABLE IF NOT EXISTS marts.unemployment_by_region (
     updated_at     timestamptz NOT NULL,
     PRIMARY KEY (quarter_start, level, locality_id)
 );
+
+-- Weekly fuel prices at three levels: Brazil, state and surveyed municipality.
+-- Averages are weighted by the number of station samples; for Brazil and
+-- states state/municipality hold '' (not NULL) so they can be in the key.
+CREATE TABLE IF NOT EXISTS marts.fuel_prices_weekly (
+    week_start    date NOT NULL,          -- Sunday (ANP survey week)
+    level         text NOT NULL,          -- Brasil | UF | Município
+    state         text NOT NULL,          -- '' for Brasil
+    municipality  text NOT NULL,          -- '' for Brasil and UF
+    product       text NOT NULL,
+    unit          text NOT NULL,
+    avg_price     numeric(10, 3) NOT NULL,
+    min_price     numeric(10, 3) NOT NULL,
+    max_price     numeric(10, 3) NOT NULL,
+    samples       integer NOT NULL,
+    updated_at    timestamptz NOT NULL,
+    PRIMARY KEY (week_start, level, state, municipality, product)
+);

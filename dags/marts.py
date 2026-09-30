@@ -1,6 +1,6 @@
 """Marts: analysis-ready tables rebuilt from staging.
 
-Runs whenever either source DAG (bcb_sgs, ibge_sidra) publishes a staging
+Runs whenever any source DAG (bcb_sgs, ibge_sidra, anp_precos) publishes a staging
 update (Airflow assets, OR condition): a failing source does not hold back the
 other one, and a full rebuild takes seconds. Each table is rebuilt in a single
 transaction (TRUNCATE + INSERT), so readers never see a half-built table and
@@ -15,10 +15,17 @@ from pathlib import Path
 import pendulum
 from airflow.sdk import dag, task
 
-from painel.dag_support import DEFAULT_ARGS, STAGING_BCB, STAGING_IBGE, TIMEZONE, dw_connection
+from painel.dag_support import (
+    DEFAULT_ARGS,
+    STAGING_ANP,
+    STAGING_BCB,
+    STAGING_IBGE,
+    TIMEZONE,
+    dw_connection,
+)
 
 SQL_DIR = Path(__file__).resolve().parents[1] / "sql" / "marts"
-MARTS = ("monthly_indicators", "ipca_by_region", "unemployment_by_region")
+MARTS = ("monthly_indicators", "ipca_by_region", "unemployment_by_region", "fuel_prices_weekly")
 
 log = logging.getLogger(__name__)
 
@@ -32,8 +39,8 @@ def _run_sql(name: str) -> None:
 
 @dag(
     dag_id="marts",
-    description="Rebuild marts (monthly indicators, IPCA and unemployment by region)",
-    schedule=STAGING_BCB | STAGING_IBGE,
+    description="Rebuild marts: monthly indicators, IPCA, unemployment and fuel prices",
+    schedule=STAGING_BCB | STAGING_IBGE | STAGING_ANP,
     start_date=pendulum.datetime(2026, 9, 1, tz=TIMEZONE),
     catchup=False,
     max_active_runs=1,

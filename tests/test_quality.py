@@ -3,6 +3,7 @@ from datetime import date
 import pytest
 
 from painel.quality import (
+    ANP_CHECKS,
     BCB_CHECKS,
     IBGE_CHECKS,
     SAMPLE_ROWS,
@@ -89,13 +90,15 @@ def test_violations_fail_with_a_readable_summary():
     assert "fresh" not in message
 
 
-@pytest.mark.parametrize("checks", [BCB_CHECKS, IBGE_CHECKS])
+@pytest.mark.parametrize("checks", [BCB_CHECKS, IBGE_CHECKS, ANP_CHECKS])
 def test_each_source_covers_the_required_check_types(checks):
     kinds = {check.name.rsplit("_", 1)[1] for check in checks}
     assert kinds == {"duplicates", "nulls", "range", "freshness"}
 
 
-@pytest.mark.parametrize("check", [*BCB_CHECKS, *IBGE_CHECKS], ids=lambda c: c.name)
+@pytest.mark.parametrize(
+    "check", [*BCB_CHECKS, *IBGE_CHECKS, *ANP_CHECKS], ids=lambda c: c.name
+)
 def test_freshness_is_relative_to_the_run_date_not_now(check):
     assert "now()" not in check.sql.lower()
     assert "current_date" not in check.sql.lower()

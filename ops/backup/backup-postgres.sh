@@ -15,6 +15,8 @@ BACKUP_DIR="${BACKUP_DIR:-/var/backups/painel}"
 RETENTION_DAYS="${RETENTION_DAYS:-7}"
 CONTAINER="${CONTAINER:-painel-postgres-1}"
 BACKUP_GROUP="${BACKUP_GROUP:-painelbak}"
+# Original source files (ANP), mirrored incrementally: they never change
+RAW_SOURCE="${RAW_SOURCE:-/var/lib/painel/raw}"
 # shellcheck disable=SC1091
 [[ -f /etc/painel-backup.env ]] && source /etc/painel-backup.env
 
@@ -45,6 +47,12 @@ mv "$work" "$target"
 # Retention: whole backup directories older than RETENTION_DAYS.
 find "$BACKUP_DIR" -mindepth 1 -maxdepth 1 -type d -name '20*' -mtime +"$RETENTION_DAYS" \
   -exec rm -rf {} +
+
+# Raw files: add new ones to the mirror, never delete (no --delete).
+if [[ -d "$RAW_SOURCE" ]]; then
+  rsync -a --exclude='.tmp/' --chmod=D750,F640 "$RAW_SOURCE/" "$BACKUP_DIR/raw/"
+  chgrp -R "$BACKUP_GROUP" "$BACKUP_DIR/raw"
+fi
 
 size="$(du -sh "$target" | cut -f1)"
 echo "backup ok: $target ($size; ${databases[*]} + globals)"

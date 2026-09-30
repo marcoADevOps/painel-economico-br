@@ -26,8 +26,12 @@ x-airflow-common: &airflow-common
     TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
     # Warehouse connection used by the DAGs (conn_id: painel_dw)
     AIRFLOW_CONN_PAINEL_DW: postgresql://${WAREHOUSE_USER}:${WAREHOUSE_PASSWORD}@postgres:5432/${WAREHOUSE_DB}
+    # Original source files (ANP) kept on disk, outside the database
+    RAW_DIR: /opt/airflow/raw
   volumes:
     - airflow-logs:/opt/airflow/logs
+    # Host dir must exist and belong to uid 50000 (docs/setup-vm.md)
+    - ${RAW_HOST_DIR:-/var/lib/painel/raw}:/opt/airflow/raw
   depends_on: &airflow-common-depends-on
     postgres:
       condition: service_healthy

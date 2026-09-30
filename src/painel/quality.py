@@ -133,6 +133,54 @@ IBGE_CHECKS = (
 )
 
 
+ANP_CHECKS = (
+    Check(
+        "anp_duplicates",
+        "one row per week, municipality, product and source file",
+        """
+        SELECT week_start, state, municipality, product, source_key, count(*)
+        FROM staging.anp_fuel_price_weekly
+        GROUP BY week_start, state, municipality, product, source_key
+        HAVING count(*) > 1
+        """,
+    ),
+    Check(
+        "anp_nulls",
+        "no nulls in required columns and at least one sample per row",
+        """
+        SELECT source_key, week_start, state, municipality, product
+        FROM staging.anp_fuel_price_weekly
+        WHERE samples IS NULL OR samples <= 0 OR price_sum IS NULL
+           OR price_min IS NULL OR price_max IS NULL OR unit IS NULL
+        """,
+    ),
+    Check(
+        # The weekly average is checked (not min/max): single-station typos in
+        # the source cannot be fixed here and must not block the pipeline.
+        "anp_range",
+        "weekly average within R$ 0.50..20 (liquid fuels, CNG) or R$ 20..300 (LPG 13 kg)",
+        """
+        SELECT source_key, week_start, state, municipality, product,
+               round(price_sum / samples, 3) AS avg_price
+        FROM staging.anp_fuel_price_weekly
+        WHERE price_min > price_max
+           OR (product = 'GLP' AND price_sum / samples NOT BETWEEN 20 AND 300)
+           OR (product <> 'GLP' AND price_sum / samples NOT BETWEEN 0.5 AND 20)
+        """,
+    ),
+    Check(
+        # Monthly files come out about a month after the period ends.
+        "anp_freshness",
+        "latest week at most 100 days older than the run date",
+        """
+        SELECT max(week_start) AS latest
+        FROM staging.anp_fuel_price_weekly
+        HAVING max(week_start) IS NULL OR max(week_start) < %(as_of)s::date - 100
+        """,
+    ),
+)
+
+
 def run_checks(conn, checks: tuple[Check, ...], as_of: date) -> list[CheckResult]:
     results = []
     with conn.cursor() as cur:

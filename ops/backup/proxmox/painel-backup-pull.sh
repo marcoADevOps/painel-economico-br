@@ -19,7 +19,8 @@ rsync -a --exclude='.partial-*' \
   -e "ssh -i $SSH_KEY -o BatchMode=yes -o StrictHostKeyChecking=yes" \
   "painelbak@${VM_HOST}:./" "$DEST/"
 
-# Every pulled backup must match its checksums.
+# Every pulled backup must match its checksums (raw/ is a plain mirror of
+# immutable source files and is not rotated).
 for dir in "$DEST"/20*/; do
   (cd "$dir" && sha256sum --quiet -c SHA256SUMS) || { echo "checksum mismatch in $dir" >&2; exit 1; }
 done

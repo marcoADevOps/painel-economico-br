@@ -25,15 +25,17 @@ def test_dags_have_owner_and_tags(dag_bag):
         assert dag.default_args.get("owner"), f"{dag_id} has no owner"
 
 
-def test_marts_is_scheduled_on_both_staging_assets(dag_bag):
-    from painel.dag_support import STAGING_BCB, STAGING_IBGE
+def test_marts_is_scheduled_on_every_staging_asset(dag_bag):
+    from painel.dag_support import STAGING_ANP, STAGING_BCB, STAGING_IBGE
 
     condition = dag_bag.dags["marts"].timetable.asset_condition
-    assert {asset.uri for asset in condition.objects} == {STAGING_BCB.uri, STAGING_IBGE.uri}
+    expected = {STAGING_BCB.uri, STAGING_IBGE.uri, STAGING_ANP.uri}
+    assert {asset.uri for asset in condition.objects} == expected
 
 
 @pytest.mark.parametrize(
-    ("dag_id", "asset_name"), [("bcb_sgs", "STAGING_BCB"), ("ibge_sidra", "STAGING_IBGE")]
+    ("dag_id", "asset_name"),
+    [("bcb_sgs", "STAGING_BCB"), ("ibge_sidra", "STAGING_IBGE"), ("anp_precos", "STAGING_ANP")],
 )
 def test_source_dags_publish_their_staging_asset(dag_bag, dag_id, asset_name):
     import painel.dag_support as support
@@ -49,7 +51,7 @@ def test_every_mart_has_a_build_script():
     assert (marts_module.SQL_DIR / "ddl.sql").is_file()
 
 
-@pytest.mark.parametrize("dag_id", ["bcb_sgs", "ibge_sidra"])
+@pytest.mark.parametrize("dag_id", ["bcb_sgs", "ibge_sidra", "anp_precos"])
 def test_staging_is_published_only_after_quality_checks(dag_bag, dag_id):
     dag = dag_bag.dags[dag_id]
     assert dag.get_task("publish_staging").upstream_task_ids == {"quality_checks"}

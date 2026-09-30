@@ -59,15 +59,28 @@ Particularidades da API do SGS, conferidas na documentação oficial e em testes
 - **Sinais especiais do SIDRA:** `-` é zero absoluto. `X`, `..` e `...` não têm valor; essas linhas são descartadas e contadas no log.
 - **Carga de histórico:** disparar manualmente com `start` (os dados começam em 2012).
 
+### `anp_precos`: ANP (preços de combustíveis)
+
+Preço médio **semanal por município pesquisado e produto** (gasolina, gasolina aditivada, etanol, diesel, diesel S10, GNV e GLP), desde 2016. A pesquisa da ANP cobre uma amostra de ~450 a 520 municípios.
+
+- **Fonte:** os CSVs de dados abertos da ANP, com uma linha por posto, produto e data de coleta. O DAG **lê a página oficial e descobre os links**, porque os nomes dos arquivos são irregulares (erros de digitação, com e sem ano, sem extensão, um semestre em `.zip`).
+- **Sem dupla contagem:** a ANP publica os mesmos dados em arquivos mensais e em semestrais consolidados. Quando existe o semestral de um período, os mensais desse período são ignorados; os mensais só completam o semestre corrente.
+- **`raw`:** os arquivos originais ficam em disco, compactados (`.csv.gz`, ~200 MB para 2016–2026), e a tabela `raw.anp_file` registra URL, SHA-256 e tamanho de cada um. Assim o backup diário do banco continua pequeno, e os arquivos originais são copiados de forma incremental.
+- **`staging.anp_fuel_price_weekly`:** soma, mínimo, máximo e número de coletas por semana (domingo a sábado), município e produto, **por arquivo de origem**. Uma semana que cruza a virada do mês aparece em dois arquivos mensais, e os marts juntam as duas partes.
+- **Agendamento:** toda segunda às 11h. Arquivos recentes (últimos 60 dias) são baixados de novo para detectar republicação pelo SHA-256; os antigos que já estão guardados são pulados.
+- **Capacidade:** no máximo 2 arquivos são processados ao mesmo tempo (o pico medido foi de ~450 MB), e downloads cortados pelo servidor são retomados com HTTP Range.
+- **Lacuna conhecida:** o 1º semestre de 2022 dos combustíveis automotivos (`ca-2022-01`) não está publicado pela ANP.
+
 ### `marts`: tabelas para análise
 
-O DAG é disparado por Assets do Airflow sempre que `bcb_sgs` **ou** `ibge_sidra` terminam de atualizar a staging. Com a condição OU, uma fonte com falha não segura a atualização da outra, e a reconstrução leva segundos. Cada tabela é refeita numa única transação (`TRUNCATE` + `INSERT`), então quem consulta nunca vê uma tabela pela metade e reexecutar é sempre seguro.
+O DAG é disparado por Assets do Airflow sempre que `bcb_sgs`, `ibge_sidra` **ou** `anp_precos` terminam de atualizar a staging. Com a condição OU, uma fonte com falha não segura a atualização da outra, e a reconstrução leva segundos. Cada tabela é refeita numa única transação (`TRUNCATE` + `INSERT`), então quem consulta nunca vê uma tabela pela metade e reexecutar é sempre seguro.
 
 | Tabela | Grão | Conteúdo |
 |---|---|---|
 | `marts.monthly_indicators` | mês | Selic meta no fim do mês, PTAX média e de fechamento, IPCA Brasil (mensal e em 12 meses) e juro real ex-post: (1 + Selic) / (1 + IPCA 12m) − 1 |
 | `marts.ipca_by_region` | mês × localidade | IPCA mensal e em 12 meses do Brasil, regiões metropolitanas e capitais |
 | `marts.unemployment_by_region` | trimestre × localidade | Taxa de desocupação do Brasil, Grandes Regiões e UFs |
+| `marts.fuel_prices_weekly` | semana × nível × produto | Preço médio, mínimo, máximo e número de coletas para Brasil, UF e município, com média ponderada pelas coletas |
 
 O IPCA das tabelas do SIDRA usadas aqui começa em 2012. Por isso, antes de 2012, `monthly_indicators` tem Selic e PTAX, mas não tem IPCA nem juro real.
 
@@ -75,12 +88,12 @@ O IPCA das tabelas do SIDRA usadas aqui começa em 2012. Por isso, antes de 2012
 
 Os dois DAGs de origem rodam uma task `quality_checks` depois de carregar a staging e **antes** de publicar o Asset que dispara os marts. Se alguma checagem falhar, a task falha na hora, sem novas tentativas (repetir não conserta dado ruim), o alerta vai para o Telegram e **os marts não são atualizados com o dado suspeito**.
 
-| Checagem | BCB | IBGE |
-|---|---|---|
-| Duplicados | uma linha por série e data | uma linha por conjunto, variável, categoria, nível, localidade e período |
-| Nulos | colunas obrigatórias preenchidas | idem |
-| Faixa plausível | Selic entre 0 e 50% a.a.; PTAX entre R$ 0,50 e R$ 20 | IPCA mensal entre −5% e 10%; IPCA 12 meses entre −10% e 100%; desocupação entre 0 e 40% |
-| Atraso | Selic e PTAX com no máximo 7 dias | IPCA Brasil com no máximo 80 dias; desocupação com no máximo 240 dias (a data de referência é o início do período) |
+| Checagem | BCB | IBGE | ANP |
+|---|---|---|---|
+| Duplicados | uma linha por série e data | uma linha por conjunto, variável, categoria, nível, localidade e período | uma linha por semana, município, produto e arquivo |
+| Nulos | colunas obrigatórias preenchidas | idem | idem, e pelo menos uma coleta |
+| Faixa plausível | Selic entre 0 e 50% a.a.; PTAX entre R$ 0,50 e R$ 20 | IPCA mensal entre −5% e 10%; IPCA 12 meses entre −10% e 100%; desocupação entre 0 e 40% | média semanal entre R$ 0,50 e R$ 20 (combustíveis líquidos e GNV) ou entre R$ 20 e R$ 300 (GLP 13 kg) |
+| Atraso | Selic e PTAX com no máximo 7 dias | IPCA Brasil com no máximo 80 dias; desocupação com no máximo 240 dias (a data de referência é o início do período) | semana mais recente com no máximo 100 dias |
 
 O atraso é medido em relação à data da execução (`as_of`), nunca em relação a "agora". Cada checagem é uma consulta SQL em `src/painel/quality.py` que retorna as linhas problemáticas: zero linhas significa que passou.
 

@@ -160,3 +160,84 @@ def upsert_ibge_staging(conn, dataset: str, table_id: int, observations: Iterabl
         cur.executemany(UPSERT_IBGE_STAGING, values)
     conn.commit()
     return len(values)
+
+
+# --- ANP fuel prices -------------------------------------------------------------
+
+SELECT_ANP_FILE = """
+    SELECT sha256, stored_path,
+           (SELECT count(*) FROM staging.anp_fuel_price_weekly s WHERE s.source_key = f.source_key)
+    FROM raw.anp_file f
+    WHERE source_key = %s
+"""
+
+UPSERT_ANP_FILE = """
+    INSERT INTO raw.anp_file (
+        source_key, file_group, period_start, period_end, url, sha256, size_bytes,
+        stored_path, downloaded_at
+    )
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, now())
+    ON CONFLICT (source_key) DO UPDATE SET
+        url = EXCLUDED.url,
+        sha256 = EXCLUDED.sha256,
+        size_bytes = EXCLUDED.size_bytes,
+        stored_path = EXCLUDED.stored_path,
+        downloaded_at = now()
+"""
+
+INSERT_ANP_STAGING = """
+    INSERT INTO staging.anp_fuel_price_weekly (
+        source_key, week_start, state, municipality, product, unit,
+        samples, price_sum, price_min, price_max, loaded_at
+    )
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
+"""
+
+
+def get_anp_file(conn, source_key: str) -> dict | None:
+    """sha256, stored_path and number of staging rows of a registered file."""
+    with conn.cursor() as cur:
+        cur.execute(SELECT_ANP_FILE, (source_key,))
+        row = cur.fetchone()
+    conn.rollback()
+    if row is None:
+        return None
+    return {"sha256": row[0], "stored_path": row[1], "staging_rows": row[2]}
+
+
+def register_anp_file(conn, source, sha256: str, size_bytes: int, stored_path: str) -> None:
+    """Record a downloaded painel.anp.SourceFile in raw.anp_file."""
+    with conn.cursor() as cur:
+        cur.execute(
+            UPSERT_ANP_FILE,
+            (
+                source.key, source.group, source.period_start, source.period_end,
+                source.url, sha256, size_bytes, stored_path,
+            ),
+        )
+    conn.commit()
+
+
+def replace_anp_staging(conn, source_key: str, result) -> int:
+    """Swap the staging rows of one source file for a new painel.anp.ParseResult.
+
+    Delete + insert in one transaction: re-running is idempotent and readers
+    never see the source half loaded.
+    """
+    values = [
+        (source_key, week, state, municipality, product, unit,
+         agg.samples, agg.price_sum, agg.price_min, agg.price_max)
+        for (week, state, municipality, product, unit), agg in result.aggregates.items()
+    ]
+    with conn.cursor() as cur:
+        cur.execute(
+            "DELETE FROM staging.anp_fuel_price_weekly WHERE source_key = %s", (source_key,)
+        )
+        if values:
+            cur.executemany(INSERT_ANP_STAGING, values)
+        cur.execute(
+            "UPDATE raw.anp_file SET rows_read = %s, rows_skipped = %s WHERE source_key = %s",
+            (result.rows, result.skipped, source_key),
+        )
+    conn.commit()
+    return len(values)

@@ -20,6 +20,9 @@ STAGING_BCB = Asset(
 STAGING_IBGE = Asset(
     name="staging.ibge_sidra_observation", uri="painel://staging/ibge_sidra_observation"
 )
+STAGING_ANP = Asset(
+    name="staging.anp_fuel_price_weekly", uri="painel://staging/anp_fuel_price_weekly"
+)
 
 DEFAULT_ARGS = {
     "owner": "painel",
