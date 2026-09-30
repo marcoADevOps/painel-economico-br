@@ -46,9 +46,11 @@ def _dw_connection():
     max_active_runs=1,
     default_args={
         "owner": "painel",
+        # Waits of ~2, 4 and 8 min: a persistent failure is alerted in ~15 min.
         "retries": 3,
-        "retry_delay": timedelta(minutes=5),
+        "retry_delay": timedelta(minutes=2),
         "retry_exponential_backoff": True,
+        "max_retry_delay": timedelta(minutes=10),
         "on_failure_callback": notify_task_failure,
     },
     params={
